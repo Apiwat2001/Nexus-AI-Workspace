@@ -19,7 +19,10 @@ import {
   Filter,
   User,
   Moon,
-  Sun
+  Sun,
+  Shield,
+  Key,
+  UserCog
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -41,13 +44,13 @@ import { LogOut, UserPlus, LogIn } from 'lucide-react';
 const socket = io();
 
 export default function App() {
-  const [user, setUser] = useState<{ id: number, username: string } | null>(() => {
+  const [user, setUser] = useState<{ id: number, username: string, role: string } | null>(() => {
     const saved = localStorage.getItem('user');
     return saved ? JSON.parse(saved) : null;
   });
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
   
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'tasks' | 'chat' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'tasks' | 'chat' | 'settings' | 'admin'>('dashboard');
   const [tasks, setTasks] = useState<Task[]>([]);
   const [stats, setStats] = useState<Stat[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -57,6 +60,17 @@ export default function App() {
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [filterStatus, setFilterStatus] = useState<string>('all');
+  const [notifications, setNotifications] = useState<{ id: number, text: string, time: string, read: boolean }[]>([
+    { id: 1, text: "New task assigned to you", time: "5m ago", read: false },
+    { id: 2, text: "Project 'Nexus' updated", time: "1h ago", read: true }
+  ]);
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [adminUsers, setAdminUsers] = useState<any[]>([]);
+  const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<any>(null);
+  const [userForm, setUserForm] = useState({ username: '', password: '', role: 'user' });
+  const [profileForm, setProfileForm] = useState({ username: '', password: '' });
+  const [isProfileEditing, setIsProfileEditing] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
       return document.documentElement.classList.contains('dark');
@@ -112,6 +126,9 @@ export default function App() {
     fetchTasks();
     fetchStats();
     fetchMessages();
+    if (user?.role === 'admin') fetchAdminUsers();
+    
+    setProfileForm({ username: user?.username || '', password: '' });
 
     socket.on('task:created', (newTask: Task) => {
       setTasks(prev => [...prev, newTask]);
@@ -170,6 +187,65 @@ export default function App() {
     } catch (err) {}
   };
 
+  const fetchAdminUsers = async () => {
+    try {
+      const res = await authFetch('/api/admin/users');
+      const data = await res.json();
+      setAdminUsers(data);
+    } catch (err) {}
+  };
+
+  const handleUpdateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await authFetch('/api/profile', {
+        method: 'PATCH',
+        body: JSON.stringify(profileForm)
+      });
+      const updated = await res.json();
+      setUser(updated);
+      localStorage.setItem('user', JSON.stringify(updated));
+      setIsProfileEditing(false);
+      setProfileForm(prev => ({ ...prev, password: '' }));
+    } catch (err) {}
+  };
+
+  const handleAdminUserAction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (editingUser) {
+        await authFetch(`/api/admin/users/${editingUser.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(userForm)
+        });
+      } else {
+        await authFetch('/api/admin/users', {
+          method: 'POST',
+          body: JSON.stringify(userForm)
+        });
+      }
+      fetchAdminUsers();
+      setIsUserModalOpen(false);
+      setEditingUser(null);
+      setUserForm({ username: '', password: '', role: 'user' });
+    } catch (err) {}
+  };
+
+  const deleteAdminUser = async (id: number) => {
+    if (!confirm('Are you sure you want to delete this user?')) return;
+    try {
+      await authFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+      fetchAdminUsers();
+    } catch (err) {}
+  };
+
+  const openTaskModal = (status?: Task['status']) => {
+    if (status) {
+      setNewTask(prev => ({ ...prev, status }));
+    }
+    setIsTaskModalOpen(true);
+  };
+
   const generateAiInsight = async () => {
     setIsAiLoading(true);
     try {
@@ -204,7 +280,7 @@ export default function App() {
     try {
       await authFetch('/api/tasks', {
         method: 'POST',
-        body: JSON.stringify({ ...newTask, status: 'todo' })
+        body: JSON.stringify({ ...newTask, status: newTask.status || 'todo' })
       });
       
       setNewTask({ title: '', priority: 'medium' });
@@ -265,6 +341,14 @@ export default function App() {
             active={activeTab === 'chat'} 
             onClick={() => setActiveTab('chat')} 
           />
+          {user?.role === 'admin' && (
+            <SidebarItem 
+              icon={<Shield size={20} />} 
+              label="Admin" 
+              active={activeTab === 'admin'} 
+              onClick={() => setActiveTab('admin')} 
+            />
+          )}
           <SidebarItem 
             icon={<Settings size={20} />} 
             label="Settings" 
@@ -309,10 +393,59 @@ export default function App() {
             >
               {darkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
-            <button className="p-2 text-slate-600 dark:text-slate-400 hover:bg-[var(--secondary)] rounded-xl transition-colors relative">
-              <Bell size={20} />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border-2 border-[var(--card)]"></span>
-            </button>
+            <div className="relative">
+              <button 
+                onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
+                className="p-2 text-slate-600 dark:text-slate-400 hover:bg-[var(--secondary)] rounded-xl transition-colors relative"
+              >
+                <Bell size={20} />
+                {notifications.some(n => !n.read) && (
+                  <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-[var(--card)]"></span>
+                )}
+              </button>
+              
+              <AnimatePresence>
+                {isNotificationsOpen && (
+                  <>
+                    <div 
+                      className="fixed inset-0 z-10" 
+                      onClick={() => setIsNotificationsOpen(false)}
+                    />
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                      className="absolute right-0 mt-2 w-80 bg-[var(--card)] border border-[var(--border)] rounded-2xl shadow-xl z-20 overflow-hidden"
+                    >
+                      <div className="p-4 border-b border-[var(--border)] flex items-center justify-between">
+                        <h4 className="font-bold text-sm">Notifications</h4>
+                        <button 
+                          onClick={() => setNotifications(prev => prev.map(n => ({ ...n, read: true })))}
+                          className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider"
+                        >
+                          Mark all read
+                        </button>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto">
+                        {notifications.length > 0 ? (
+                          notifications.map(n => (
+                            <div key={n.id} className={cn("p-4 border-b border-[var(--border)] last:border-0 flex gap-3", !n.read && "bg-indigo-50/30 dark:bg-indigo-950/20")}>
+                              <div className={cn("w-2 h-2 mt-1.5 rounded-full shrink-0", n.read ? "bg-slate-200 dark:bg-slate-700" : "bg-indigo-500")}></div>
+                              <div>
+                                <p className="text-xs font-medium text-slate-900 dark:text-slate-100">{n.text}</p>
+                                <p className="text-[10px] text-slate-400 mt-1">{n.time}</p>
+                              </div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="p-8 text-center text-xs text-slate-400">No notifications</div>
+                        )}
+                      </div>
+                    </motion.div>
+                  </>
+                )}
+              </AnimatePresence>
+            </div>
             <div className="h-8 w-px bg-[var(--border)] mx-2"></div>
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
@@ -519,18 +652,21 @@ export default function App() {
                     tasks={filteredTasks.filter(t => t.status === 'todo')} 
                     onStatusChange={updateTaskStatus}
                     onDelete={deleteTask}
+                    onAdd={() => openTaskModal('todo')}
                   />
                   <TaskColumn 
                     title="In Progress" 
                     tasks={filteredTasks.filter(t => t.status === 'in-progress')} 
                     onStatusChange={updateTaskStatus}
                     onDelete={deleteTask}
+                    onAdd={() => openTaskModal('in-progress')}
                   />
                   <TaskColumn 
                     title="Completed" 
                     tasks={filteredTasks.filter(t => t.status === 'done')} 
                     onStatusChange={updateTaskStatus}
                     onDelete={deleteTask}
+                    onAdd={() => openTaskModal('done')}
                   />
                 </div>
               </motion.div>
@@ -558,20 +694,31 @@ export default function App() {
                 <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
                   {messages.map((msg) => (
                     <div key={msg.id} className={cn(
-                      "flex flex-col max-w-[80%]",
-                      msg.user === 'Alex Rivera' ? "ml-auto items-end" : "items-start"
+                      "flex gap-3 max-w-[80%]",
+                      msg.user_name === user.username ? "ml-auto flex-row-reverse" : "flex-row"
                     )}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-black text-slate-600 dark:text-slate-400">{msg.user}</span>
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                      </div>
+                      <img 
+                        src={`https://picsum.photos/seed/${msg.user_name}/100/100`} 
+                        className="w-8 h-8 rounded-full shrink-0 border border-[var(--border)]" 
+                        alt="Avatar"
+                        referrerPolicy="no-referrer"
+                      />
                       <div className={cn(
-                        "px-4 py-2 rounded-2xl text-sm font-medium leading-relaxed",
-                        msg.user === 'Alex Rivera' 
-                          ? "bg-indigo-600 text-white rounded-tr-none shadow-md shadow-indigo-500/20" 
-                          : "bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-tl-none"
+                        "flex flex-col",
+                        msg.user_name === user.username ? "items-end" : "items-start"
                       )}>
-                        {msg.content}
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-black text-slate-600 dark:text-slate-400">{msg.user_name}</span>
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                        <div className={cn(
+                          "px-4 py-2 rounded-2xl text-sm font-medium leading-relaxed",
+                          msg.user_name === user.username 
+                            ? "bg-indigo-600 text-white rounded-tr-none shadow-md shadow-indigo-500/20" 
+                            : "bg-[var(--secondary)] text-[var(--secondary-foreground)] rounded-tl-none"
+                        )}>
+                          {msg.content}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -593,6 +740,90 @@ export default function App() {
               </motion.div>
             )}
 
+            {activeTab === 'admin' && user?.role === 'admin' && (
+              <motion.div 
+                key="admin"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="space-y-8"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h1 className="text-3xl font-bold tracking-tight">Admin Control</h1>
+                    <p className="text-gray-500 mt-1">Manage users, roles, and system access.</p>
+                  </div>
+                  <button 
+                    onClick={() => {
+                      setEditingUser(null);
+                      setUserForm({ username: '', password: '', role: 'user' });
+                      setIsUserModalOpen(true);
+                    }}
+                    className="flex items-center gap-2 px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black shadow-lg shadow-indigo-500/20 hover:bg-indigo-700 transition-all"
+                  >
+                    <Plus size={20} />
+                    <span>Add User</span>
+                  </button>
+                </div>
+
+                <div className="bg-[var(--card)] rounded-3xl border border-[var(--border)] overflow-hidden transition-colors duration-300">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 dark:bg-slate-900/50 border-b border-[var(--border)]">
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">User</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Role</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Joined</th>
+                        <th className="px-6 py-4 text-[10px] font-black text-slate-500 uppercase tracking-widest text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {adminUsers.map(u => (
+                        <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-3">
+                              <img src={`https://picsum.photos/seed/${u.username}/100/100`} className="w-8 h-8 rounded-full border border-[var(--border)]" alt="" />
+                              <span className="font-bold text-sm">{u.username}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4">
+                            <span className={cn(
+                              "px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider",
+                              u.role === 'admin' ? "bg-indigo-100 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400" : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+                            )}>
+                              {u.role}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-xs text-slate-500">
+                            {new Date(u.created_at).toLocaleDateString()}
+                          </td>
+                          <td className="px-6 py-4 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button 
+                                onClick={() => {
+                                  setEditingUser(u);
+                                  setUserForm({ username: u.username, password: '', role: u.role });
+                                  setIsUserModalOpen(true);
+                                }}
+                                className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-xl transition-all"
+                              >
+                                <UserCog size={18} />
+                              </button>
+                              <button 
+                                onClick={() => deleteAdminUser(u.id)}
+                                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-all"
+                                disabled={u.id === user.id}
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </motion.div>
+            )}
+
             {activeTab === 'settings' && (
               <motion.div 
                 key="settings"
@@ -610,14 +841,44 @@ export default function App() {
                     title="Profile Information" 
                     icon={<User size={20} className="text-indigo-600 dark:text-indigo-400" />}
                   >
-                    <div className="flex items-center gap-6 p-4">
-                      <img src={`https://picsum.photos/seed/${user.username}/100/100`} className="w-16 h-16 rounded-full border-2 border-[var(--border)]" alt="Profile" />
-                      <div className="flex-1">
-                        <p className="font-bold text-lg">{user.username}</p>
-                        <p className="text-sm text-gray-500">{user.username.toLowerCase()}@nexus.ai</p>
+                    {isProfileEditing ? (
+                      <form onSubmit={handleUpdateProfile} className="p-4 space-y-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Username</label>
+                            <input 
+                              type="text" 
+                              className="w-full px-3 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              value={profileForm.username}
+                              onChange={(e) => setProfileForm({ ...profileForm, username: e.target.value })}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">New Password (Optional)</label>
+                            <input 
+                              type="password" 
+                              className="w-full px-3 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                              placeholder="Leave blank to keep current"
+                              value={profileForm.password}
+                              onChange={(e) => setProfileForm({ ...profileForm, password: e.target.value })}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button type="submit" className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 transition-all">Save Changes</button>
+                          <button type="button" onClick={() => setIsProfileEditing(false)} className="px-4 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-sm font-bold hover:bg-slate-200 transition-all">Cancel</button>
+                        </div>
+                      </form>
+                    ) : (
+                      <div className="flex items-center gap-6 p-4">
+                        <img src={`https://picsum.photos/seed/${user.username}/100/100`} className="w-16 h-16 rounded-full border-2 border-[var(--border)]" alt="Profile" />
+                        <div className="flex-1">
+                          <p className="font-bold text-lg">{user.username}</p>
+                          <p className="text-sm text-gray-500">{user.username.toLowerCase()}@nexus.ai</p>
+                        </div>
+                        <button onClick={() => setIsProfileEditing(true)} className="px-4 py-2 border border-[var(--border)] rounded-xl text-sm font-semibold hover:bg-[var(--secondary)] transition-all">Edit</button>
                       </div>
-                      <button className="px-4 py-2 border border-[var(--border)] rounded-xl text-sm font-semibold hover:bg-[var(--secondary)] transition-all">Edit</button>
-                    </div>
+                    )}
                   </SettingsSection>
 
                   <SettingsSection 
@@ -649,6 +910,71 @@ export default function App() {
           </AnimatePresence>
         </div>
       </main>
+
+      {/* Admin User Modal */}
+      <AnimatePresence>
+        {isUserModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsUserModalOpen(false)}
+              className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-[var(--card)] rounded-3xl shadow-2xl overflow-hidden border border-[var(--border)]"
+            >
+              <div className="p-6 border-b border-[var(--border)] flex items-center justify-between">
+                <h3 className="text-xl font-bold">{editingUser ? 'Edit User' : 'Add New User'}</h3>
+                <button onClick={() => setIsUserModalOpen(false)} className="text-gray-400 hover:text-gray-600">
+                  <X size={20} />
+                </button>
+              </div>
+              <form onSubmit={handleAdminUserAction} className="p-6 space-y-4">
+                <div>
+                  <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Username</label>
+                  <input 
+                    type="text" 
+                    required
+                    className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    value={userForm.username}
+                    onChange={(e) => setUserForm({...userForm, username: e.target.value})}
+                    disabled={!!editingUser}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">{editingUser ? 'New Password (Optional)' : 'Password'}</label>
+                  <input 
+                    type="password" 
+                    required={!editingUser}
+                    className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    value={userForm.password}
+                    onChange={(e) => setUserForm({...userForm, password: e.target.value})}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">Role</label>
+                  <select 
+                    className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                    value={userForm.role}
+                    onChange={(e) => setUserForm({...userForm, role: e.target.value})}
+                  >
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </div>
+                <button className="w-full py-3 bg-indigo-600 text-white rounded-xl font-black shadow-lg shadow-indigo-500/20 hover:bg-indigo-700 transition-all">
+                  {editingUser ? 'Update User' : 'Create User'}
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* New Task Modal */}
       <AnimatePresence>
@@ -770,7 +1096,7 @@ function StatCard({ title, value, icon, trend, color }: { title: string, value: 
   );
 }
 
-function TaskColumn({ title, tasks, onStatusChange, onDelete }: { title: string, tasks: Task[], onStatusChange: (id: number, status: Task['status']) => void, onDelete: (id: number) => void }) {
+function TaskColumn({ title, tasks, onStatusChange, onDelete, onAdd }: { title: string, tasks: Task[], onStatusChange: (id: number, status: Task['status']) => void, onDelete: (id: number) => void, onAdd: () => void }) {
   return (
     <div className="flex flex-col h-full bg-slate-200/40 dark:bg-slate-900/40 rounded-3xl p-4 border border-slate-300/40 dark:border-slate-800/60 transition-colors duration-300">
       <div className="flex items-center justify-between mb-6 px-2">
@@ -780,7 +1106,7 @@ function TaskColumn({ title, tasks, onStatusChange, onDelete }: { title: string,
             {tasks.length}
           </span>
         </div>
-        <button className="text-slate-500 hover:text-indigo-600 transition-colors">
+        <button onClick={onAdd} className="text-slate-500 hover:text-indigo-600 transition-colors">
           <Plus size={18} />
         </button>
       </div>

@@ -78,6 +78,7 @@ async function initDb() {
           id SERIAL PRIMARY KEY,
           username TEXT UNIQUE NOT NULL,
           password TEXT NOT NULL,
+          role TEXT DEFAULT 'user',
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS projects (
@@ -108,6 +109,7 @@ async function initDb() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           username TEXT UNIQUE NOT NULL,
           password TEXT NOT NULL,
+          role TEXT DEFAULT 'user',
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS projects (
@@ -135,6 +137,12 @@ async function initDb() {
     }
 
     // Seed data if empty
+    const userRes = await db.query("SELECT COUNT(*) as count FROM users");
+    if (parseInt(userRes.rows[0].count) === 0) {
+      const hashedPassword = await bcrypt.hash('admin123', 10);
+      await db.query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", ['admin', hashedPassword, 'admin']);
+    }
+
     const projectRes = await db.query("SELECT COUNT(*) as count FROM projects");
     if (parseInt(projectRes.rows[0].count) === 0) {
       const res = await db.query("INSERT INTO projects (name, description) VALUES ($1, $2) RETURNING id", ["Main Project", "The primary development workspace"]);
@@ -161,6 +169,15 @@ const authenticateToken = (req: any, res: any, next: any) => {
     req.user = user;
     next();
   });
+};
+
+// Middleware to verify Admin
+const isAdmin = (req: any, res: any, next: any) => {
+  if (req.user && req.user.role === 'admin') {
+    next();
+  } else {
+    res.status(403).json({ error: "Admin access required" });
+  }
 };
 
 async function startServer() {
@@ -199,13 +216,92 @@ async function startServer() {
       const user = result.rows[0];
 
       if (user && await bcrypt.compare(password, user.password)) {
-        const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '24h' });
-        res.json({ token, user: { id: user.id, username: user.username } });
+        const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
+        res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
       } else {
         res.status(401).json({ error: "Invalid credentials" });
       }
     } catch (err) {
       res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  // Profile Update
+  app.patch("/api/profile", authenticateToken, async (req: any, res: any) => {
+    const { username, password } = req.body;
+    const userId = req.user.id;
+    try {
+      let query = "UPDATE users SET username = COALESCE($1, username)";
+      let params = [username];
+      
+      if (password) {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        query += ", password = $2 WHERE id = $3 RETURNING id, username, role";
+        params.push(hashedPassword, userId);
+      } else {
+        query += " WHERE id = $2 RETURNING id, username, role";
+        params.push(userId);
+      }
+      
+      const result = await db.query(query, params);
+      res.json(result.rows[0]);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
+  // Admin Routes
+  app.get("/api/admin/users", authenticateToken, isAdmin, async (req: any, res: any) => {
+    try {
+      const result = await db.query("SELECT id, username, role, created_at FROM users ORDER BY id ASC");
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  app.post("/api/admin/users", authenticateToken, isAdmin, async (req: any, res: any) => {
+    const { username, password, role } = req.body;
+    try {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const result = await db.query(
+        "INSERT INTO users (username, password, role) VALUES ($1, $2, $3) RETURNING id, username, role",
+        [username, hashedPassword, role || 'user']
+      );
+      res.status(201).json(result.rows[0]);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to create user" });
+    }
+  });
+
+  app.patch("/api/admin/users/:id", authenticateToken, isAdmin, async (req: any, res: any) => {
+    const { id } = req.params;
+    const { role, password } = req.body;
+    try {
+      let query = "UPDATE users SET role = COALESCE($1, role)";
+      let params = [role];
+      if (password) {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        query += ", password = $2 WHERE id = $3 RETURNING id, username, role";
+        params.push(hashedPassword, id);
+      } else {
+        query += " WHERE id = $2 RETURNING id, username, role";
+        params.push(id);
+      }
+      const result = await db.query(query, params);
+      res.json(result.rows[0]);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  app.delete("/api/admin/users/:id", authenticateToken, isAdmin, async (req: any, res: any) => {
+    const { id } = req.params;
+    try {
+      await db.query("DELETE FROM users WHERE id = $1", [id]);
+      res.status(204).send();
+    } catch (err) {
+      res.status(500).json({ error: "Failed to delete user" });
     }
   });
 
