@@ -519,9 +519,9 @@ export default function App() {
                 </div>
               </div>
               <img 
-                src={`https://picsum.photos/seed/${user.username}/100/100`} 
+                src={user.avatar || `https://picsum.photos/seed/${user.username}/100/100`} 
                 alt="Avatar" 
-                className="w-10 h-10 rounded-full border-2 border-[var(--card)] shadow-sm"
+                className="w-10 h-10 rounded-full border-2 border-[var(--card)] shadow-sm object-cover"
                 referrerPolicy="no-referrer"
               />
               <button 
@@ -883,7 +883,7 @@ export default function App() {
                         <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
-                              <img src={`https://picsum.photos/seed/${u.username}/100/100`} className="w-8 h-8 rounded-full border border-[var(--border)]" alt="" />
+                              <img src={u.avatar || `https://picsum.photos/seed/${u.username}/100/100`} className="w-8 h-8 rounded-full border border-[var(--border)] object-cover" alt="" />
                               <span className="font-bold text-sm">{u.username}</span>
                             </div>
                           </td>
