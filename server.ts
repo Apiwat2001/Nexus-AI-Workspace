@@ -1,0 +1,332 @@
+import express from "express";
+import { createServer } from "http";
+import { Server } from "socket.io";
+import { createServer as createViteServer } from "vite";
+import pkg from 'pg';
+const { Pool } = pkg;
+import Database from "better-sqlite3";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import path from "path";
+import { fileURLToPath } from "url";
+import dotenv from "dotenv";
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const dbPort = parseInt(process.env.DB_PORT || '5432');
+const pool = new Pool({
+  host: process.env.DB_HOST || 'localhost',
+  port: (dbPort > 0 && dbPort < 65536) ? dbPort : 5432,
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'postgres',
+  database: process.env.DB_NAME || 'nexus_db',
+  connectionTimeoutMillis: 2000, // Short timeout for fallback
+});
+
+const sqlite = new Database("nexus.db");
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret';
+
+let usePostgres = false;
+
+// Database Abstraction
+const db = {
+  query: async (text: string, params?: any[]) => {
+    if (usePostgres) {
+      return pool.query(text, params);
+    } else {
+      // Convert PostgreSQL $1, $2 to SQLite ?
+      const sqliteQuery = text.replace(/\$\d+/g, '?');
+      if (text.trim().toUpperCase().startsWith('SELECT')) {
+        const rows = sqlite.prepare(sqliteQuery).all(params || []);
+        return { rows, rowCount: rows.length };
+      } else {
+        const result = sqlite.prepare(sqliteQuery).run(params || []);
+        // Mock RETURNING for SQLite
+        if (text.includes('RETURNING')) {
+          const lastId = result.lastInsertRowid;
+          const tableName = text.match(/INSERT INTO (\w+)/i)?.[1];
+          if (tableName) {
+            const row = sqlite.prepare(`SELECT * FROM ${tableName} WHERE id = ?`).get(lastId);
+            return { rows: [row], rowCount: 1 };
+          }
+        }
+        return { rows: [], rowCount: result.changes };
+      }
+    }
+  }
+};
+
+// Initialize Database
+async function initDb() {
+  try {
+    // Test PostgreSQL connection
+    await pool.query('SELECT 1');
+    usePostgres = true;
+    console.log("Using PostgreSQL");
+  } catch (err) {
+    console.log("PostgreSQL not available, falling back to SQLite");
+    usePostgres = false;
+  }
+
+  try {
+    if (usePostgres) {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          username TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS projects (
+          id SERIAL PRIMARY KEY,
+          name TEXT NOT NULL,
+          description TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS tasks (
+          id SERIAL PRIMARY KEY,
+          project_id INTEGER REFERENCES projects(id),
+          title TEXT NOT NULL,
+          status TEXT DEFAULT 'todo',
+          priority TEXT DEFAULT 'medium',
+          assignee TEXT,
+          due_date TEXT
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+          id SERIAL PRIMARY KEY,
+          user_name TEXT NOT NULL,
+          content TEXT NOT NULL,
+          timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+    } else {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          password TEXT NOT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS projects (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          description TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE TABLE IF NOT EXISTS tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          project_id INTEGER REFERENCES projects(id),
+          title TEXT NOT NULL,
+          status TEXT DEFAULT 'todo',
+          priority TEXT DEFAULT 'medium',
+          assignee TEXT,
+          due_date TEXT
+        );
+        CREATE TABLE IF NOT EXISTS messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_name TEXT NOT NULL,
+          content TEXT NOT NULL,
+          timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+    }
+
+    // Seed data if empty
+    const projectRes = await db.query("SELECT COUNT(*) as count FROM projects");
+    if (parseInt(projectRes.rows[0].count) === 0) {
+      const res = await db.query("INSERT INTO projects (name, description) VALUES ($1, $2) RETURNING id", ["Main Project", "The primary development workspace"]);
+      const projectId = res.rows[0].id;
+      await db.query("INSERT INTO tasks (project_id, title, status, priority) VALUES ($1, $2, $3, $4)", [projectId, "Setup Architecture", "done", "high"]);
+      await db.query("INSERT INTO tasks (project_id, title, status, priority) VALUES ($1, $2, $3, $4)", [projectId, "Design UI Mockups", "in-progress", "medium"]);
+      await db.query("INSERT INTO tasks (project_id, title, status, priority) VALUES ($1, $2, $3, $4)", [projectId, "Implement AI Service", "todo", "high"]);
+    }
+    console.log("Database initialized");
+  } catch (err) {
+    console.error("Database initialization failed:", err);
+  }
+}
+
+// Middleware to verify JWT
+const authenticateToken = (req: any, res: any, next: any) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+
+  if (!token) return res.status(401).json({ error: "Access denied" });
+
+  jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+    if (err) return res.status(403).json({ error: "Invalid token" });
+    req.user = user;
+    next();
+  });
+};
+
+async function startServer() {
+  await initDb();
+
+  const app = express();
+  const httpServer = createServer(app);
+  const io = new Server(httpServer, {
+    cors: { origin: "*" }
+  });
+
+  app.use(express.json());
+
+  // Auth Routes
+  app.post("/api/auth/register", async (req, res) => {
+    const { username, password } = req.body;
+    try {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const result = await db.query(
+        "INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id, username",
+        [username, hashedPassword]
+      );
+      res.status(201).json(result.rows[0]);
+    } catch (err: any) {
+      if (err.code === '23505' || err.message?.includes('UNIQUE constraint failed')) {
+        return res.status(400).json({ error: "Username already exists" });
+      }
+      res.status(500).json({ error: "Registration failed" });
+    }
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    const { username, password } = req.body;
+    try {
+      const result = await db.query("SELECT * FROM users WHERE username = $1", [username]);
+      const user = result.rows[0];
+
+      if (user && await bcrypt.compare(password, user.password)) {
+        const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '24h' });
+        res.json({ token, user: { id: user.id, username: user.username } });
+      } else {
+        res.status(401).json({ error: "Invalid credentials" });
+      }
+    } catch (err) {
+      res.status(500).json({ error: "Login failed" });
+    }
+  });
+
+  // API Routes
+  app.get("/api/projects", authenticateToken, async (req, res) => {
+    try {
+      const result = await db.query("SELECT * FROM projects");
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch projects" });
+    }
+  });
+
+  app.get("/api/tasks", authenticateToken, async (req, res) => {
+    try {
+      const result = await db.query("SELECT * FROM tasks");
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch tasks" });
+    }
+  });
+
+  app.get("/api/stats", authenticateToken, async (req, res) => {
+    try {
+      const result = await db.query("SELECT status, COUNT(*) as count FROM tasks GROUP BY status");
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch stats" });
+    }
+  });
+
+  app.post("/api/tasks", authenticateToken, async (req, res) => {
+    const { title, status, priority, project_id } = req.body;
+    try {
+      const result = await db.query(
+        "INSERT INTO tasks (title, status, priority, project_id) VALUES ($1, $2, $3, $4) RETURNING *",
+        [title, status || 'todo', priority || 'medium', project_id || 1]
+      );
+      const newTask = result.rows[0];
+      io.emit("task:created", newTask);
+      res.json(newTask);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to create task" });
+    }
+  });
+
+  app.patch("/api/tasks/:id", authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { status, priority } = req.body;
+    try {
+      const result = await db.query(
+        "UPDATE tasks SET status = COALESCE($1, status), priority = COALESCE($2, priority) WHERE id = $3 RETURNING *",
+        [status, priority, id]
+      );
+      const updatedTask = result.rows[0];
+      io.emit("task:updated", updatedTask);
+      res.json(updatedTask);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to update task" });
+    }
+  });
+
+  app.get("/api/messages", authenticateToken, async (req, res) => {
+    try {
+      const result = await db.query("SELECT * FROM messages ORDER BY timestamp DESC LIMIT 50");
+      res.json(result.rows.reverse());
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch messages" });
+    }
+  });
+
+  app.post("/api/messages", authenticateToken, async (req, res) => {
+    const { user_name, content } = req.body;
+    try {
+      const result = await db.query(
+        "INSERT INTO messages (user_name, content) VALUES ($1, $2) RETURNING *",
+        [user_name, content]
+      );
+      const newMessage = result.rows[0];
+      io.emit("message:new", newMessage);
+      res.json(newMessage);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to send message" });
+    }
+  });
+
+  app.delete("/api/tasks/:id", authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    try {
+      await db.query("DELETE FROM tasks WHERE id = $1", [id]);
+      io.emit("task:deleted", id);
+      res.status(204).send();
+    } catch (err) {
+      res.status(500).json({ error: "Failed to delete task" });
+    }
+  });
+
+  // Socket.io logic
+  io.on("connection", (socket) => {
+    console.log("User connected:", socket.id);
+    socket.on("disconnect", () => console.log("User disconnected"));
+  });
+
+  // Vite middleware for development
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.join(__dirname, "dist")));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(__dirname, "dist", "index.html"));
+    });
+  }
+
+  const PORT = 3000;
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server running on http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer();
