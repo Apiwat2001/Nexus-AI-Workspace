@@ -246,6 +246,15 @@ async function startServer() {
   });
 
   // Profile Update
+  app.get("/api/profile", authenticateToken, async (req: any, res: any) => {
+    try {
+      const result = await db.query("SELECT id, username, role FROM users WHERE id = $1", [req.user.id]);
+      res.json(result.rows[0]);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch profile" });
+    }
+  });
+
   app.patch("/api/profile", authenticateToken, async (req: any, res: any) => {
     const { username, password } = req.body;
     const userId = req.user.id;

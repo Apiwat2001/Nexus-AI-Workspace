@@ -123,6 +123,18 @@ export default function App() {
   useEffect(() => {
     if (!token) return;
 
+    const fetchProfile = async () => {
+      try {
+        const res = await authFetch('/api/profile');
+        const data = await res.json();
+        if (JSON.stringify(data) !== JSON.stringify(user)) {
+          setUser(data);
+          localStorage.setItem('user', JSON.stringify(data));
+        }
+      } catch (err) {}
+    };
+
+    fetchProfile();
     fetchTasks();
     fetchStats();
     fetchMessages();
@@ -155,7 +167,7 @@ export default function App() {
       socket.off('task:deleted');
       socket.off('message:new');
     };
-  }, []);
+  }, [token, user?.role]);
 
   useEffect(() => {
     if (activeTab === 'chat') {
@@ -450,7 +462,10 @@ export default function App() {
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
                 <p className="text-sm font-bold text-slate-900 dark:text-slate-100">{user.username}</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Team Member</p>
+                <div className="flex items-center justify-end gap-1">
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">{user.role || 'user'}</p>
+                  {user.role === 'admin' && <Shield size={10} className="text-indigo-500" />}
+                </div>
               </div>
               <img 
                 src={`https://picsum.photos/seed/${user.username}/100/100`} 
