@@ -44,7 +44,7 @@ import { LogOut, UserPlus, LogIn } from 'lucide-react';
 const socket = io();
 
 export default function App() {
-  const [user, setUser] = useState<{ id: number, username: string, role: string } | null>(() => {
+  const [user, setUser] = useState<{ id: number, username: string, role: string, avatar?: string } | null>(() => {
     try {
       const saved = localStorage.getItem('user');
       const parsed = saved ? JSON.parse(saved) : null;
@@ -74,7 +74,7 @@ export default function App() {
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<any>(null);
   const [userForm, setUserForm] = useState({ username: '', password: '', role: 'user' });
-  const [profileForm, setProfileForm] = useState({ username: '', password: '' });
+  const [profileForm, setProfileForm] = useState({ username: '', password: '', avatar: '' });
   const [isProfileEditing, setIsProfileEditing] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -149,7 +149,7 @@ export default function App() {
     fetchMessages();
     if (user?.role === 'admin') fetchAdminUsers();
     
-    setProfileForm({ username: user?.username || '', password: '' });
+    setProfileForm({ username: user?.username || '', password: '', avatar: user?.avatar || '' });
 
     socket.on('task:created', (newTask: Task) => {
       setTasks(prev => [...prev, newTask]);
@@ -170,11 +170,16 @@ export default function App() {
       setMessages(prev => [...prev, msg]);
     });
 
+    socket.on('message:deleted', (id: string) => {
+      setMessages(prev => prev.filter(m => m.id !== parseInt(id)));
+    });
+
     return () => {
       socket.off('task:created');
       socket.off('task:updated');
       socket.off('task:deleted');
       socket.off('message:new');
+      socket.off('message:deleted');
     };
   }, [token, user?.role]);
 
@@ -187,32 +192,44 @@ export default function App() {
   const fetchTasks = async () => {
     try {
       const res = await authFetch('/api/tasks');
+      if (!res.ok) return;
       const data = await res.json();
-      setTasks(data);
+      if (Array.isArray(data)) {
+        setTasks(data);
+      }
     } catch (err) {}
   };
 
   const fetchStats = async () => {
     try {
       const res = await authFetch('/api/stats');
+      if (!res.ok) return;
       const data = await res.json();
-      setStats(data);
+      if (Array.isArray(data)) {
+        setStats(data);
+      }
     } catch (err) {}
   };
 
   const fetchMessages = async () => {
     try {
       const res = await authFetch('/api/messages');
+      if (!res.ok) return;
       const data = await res.json();
-      setMessages(data);
+      if (Array.isArray(data)) {
+        setMessages(data);
+      }
     } catch (err) {}
   };
 
   const fetchAdminUsers = async () => {
     try {
       const res = await authFetch('/api/admin/users');
+      if (!res.ok) return;
       const data = await res.json();
-      setAdminUsers(data);
+      if (Array.isArray(data)) {
+        setAdminUsers(data);
+      }
     } catch (err) {}
   };
 
@@ -322,7 +339,14 @@ export default function App() {
     } catch (err) {}
   };
 
-  const filteredTasks = tasks.filter(t => {
+  const deleteMessage = async (id: number) => {
+    if (!confirm('Delete this message?')) return;
+    try {
+      await authFetch(`/api/messages/${id}`, { method: 'DELETE' });
+    } catch (err) {}
+  };
+
+  const filteredTasks = (Array.isArray(tasks) ? tasks : []).filter(t => {
     const matchesSearch = (t.title?.toLowerCase() || '').includes(searchQuery?.toLowerCase() || '');
     const matchesFilter = filterStatus === 'all' || t.status === filterStatus;
     return matchesSearch && matchesFilter;
@@ -600,7 +624,7 @@ export default function App() {
                             }}
                           />
                           <Bar dataKey="count" radius={[8, 8, 0, 0]}>
-                            {stats.map((entry, index) => (
+                            {Array.isArray(stats) && stats.map((entry, index) => (
                               <Cell key={`cell-${index}`} fill={entry.status === 'done' ? '#10B981' : entry.status === 'in-progress' ? '#F59E0B' : '#6366F1'} />
                             ))}
                           </Bar>
@@ -615,7 +639,7 @@ export default function App() {
                       <button onClick={() => setActiveTab('tasks')} className="text-indigo-600 dark:text-indigo-400 text-sm font-bold hover:underline">View All</button>
                     </div>
                     <div className="space-y-4">
-                      {tasks.slice(-4).reverse().map(task => (
+                      {(Array.isArray(tasks) ? tasks : []).slice(-4).reverse().map(task => (
                         <div key={task.id} className="flex items-center gap-4 p-3 hover:bg-[var(--secondary)] rounded-2xl transition-colors group">
                           <div className={cn(
                             "w-10 h-10 rounded-xl flex items-center justify-center shrink-0",
@@ -716,14 +740,14 @@ export default function App() {
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                  {messages.map((msg) => (
+                  {Array.isArray(messages) && messages.map((msg) => (
                     <div key={msg.id} className={cn(
-                      "flex gap-3 max-w-[80%]",
+                      "flex gap-3 max-w-[80%] group",
                       msg.user_name === user.username ? "ml-auto flex-row-reverse" : "flex-row"
                     )}>
                       <img 
-                        src={`https://picsum.photos/seed/${msg.user_name}/100/100`} 
-                        className="w-8 h-8 rounded-full shrink-0 border border-[var(--border)]" 
+                        src={(msg as any).avatar || `https://picsum.photos/seed/${msg.user_name}/100/100`} 
+                        className="w-8 h-8 rounded-full shrink-0 border border-[var(--border)] object-cover" 
                         alt="Avatar"
                         referrerPolicy="no-referrer"
                       />
@@ -734,6 +758,14 @@ export default function App() {
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-xs font-black text-slate-600 dark:text-slate-400">{msg.user_name}</span>
                           <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          {user.role === 'admin' && (
+                            <button 
+                              onClick={() => deleteMessage(msg.id)}
+                              className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-rose-500 transition-all"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
                         </div>
                         <div className={cn(
                           "px-4 py-2 rounded-2xl text-sm font-medium leading-relaxed",
@@ -800,7 +832,7 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border)]">
-                      {adminUsers.map(u => (
+                      {Array.isArray(adminUsers) && adminUsers.map(u => (
                         <tr key={u.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-3">
@@ -867,6 +899,63 @@ export default function App() {
                   >
                     {isProfileEditing ? (
                       <form onSubmit={handleUpdateProfile} className="p-4 space-y-4">
+                        <div className="flex items-center gap-4 mb-4">
+                          <div className="relative group">
+                            <img 
+                              src={profileForm.avatar || `https://picsum.photos/seed/${user.username}/100/100`} 
+                              className="w-20 h-20 rounded-full border-2 border-indigo-500 object-cover" 
+                              alt="Avatar" 
+                            />
+                            <label className="absolute inset-0 flex items-center justify-center bg-black/40 rounded-full opacity-0 group-hover:opacity-100 cursor-pointer transition-opacity">
+                              <Plus className="text-white" size={24} />
+                              <input 
+                                type="file" 
+                                className="hidden" 
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    const reader = new FileReader();
+                                    reader.onload = (event) => {
+                                      const img = new Image();
+                                      img.onload = () => {
+                                        const canvas = document.createElement('canvas');
+                                        const MAX_WIDTH = 150;
+                                        const MAX_HEIGHT = 150;
+                                        let width = img.width;
+                                        let height = img.height;
+
+                                        if (width > height) {
+                                          if (width > MAX_WIDTH) {
+                                            height *= MAX_WIDTH / width;
+                                            width = MAX_WIDTH;
+                                          }
+                                        } else {
+                                          if (height > MAX_HEIGHT) {
+                                            width *= MAX_HEIGHT / height;
+                                            height = MAX_HEIGHT;
+                                          }
+                                        }
+                                        canvas.width = width;
+                                        canvas.height = height;
+                                        const ctx = canvas.getContext('2d');
+                                        ctx?.drawImage(img, 0, 0, width, height);
+                                        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                                        setProfileForm({ ...profileForm, avatar: dataUrl });
+                                      };
+                                      img.src = event.target?.result as string;
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                            </label>
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold">Change Avatar</p>
+                            <p className="text-xs text-slate-500">JPG or PNG, max 150x150px</p>
+                          </div>
+                        </div>
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Username</label>
@@ -895,7 +984,7 @@ export default function App() {
                       </form>
                     ) : (
                       <div className="flex items-center gap-6 p-4">
-                        <img src={`https://picsum.photos/seed/${user.username}/100/100`} className="w-16 h-16 rounded-full border-2 border-[var(--border)]" alt="Profile" />
+                        <img src={user.avatar || `https://picsum.photos/seed/${user.username}/100/100`} className="w-16 h-16 rounded-full border-2 border-[var(--border)] object-cover" alt="Profile" />
                         <div className="flex-1">
                           <p className="font-bold text-lg">{user.username}</p>
                           <p className="text-sm text-gray-500">{(user.username || '').toLowerCase()}@nexus.ai</p>

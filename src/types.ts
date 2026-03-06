@@ -22,7 +22,7 @@ export interface Stat {
 
 export interface Message {
   id: number;
-  user: string;
+  user_name: string;
   content: string;
   timestamp: string;
 }

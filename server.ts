@@ -79,6 +79,7 @@ async function initDb() {
           username TEXT UNIQUE NOT NULL,
           password TEXT NOT NULL,
           role TEXT DEFAULT 'user',
+          avatar TEXT,
           created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS projects (
@@ -103,6 +104,14 @@ async function initDb() {
           timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
       `);
+
+      // Ensure columns exist in PostgreSQL (migration)
+      try {
+        await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'");
+        await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT");
+      } catch (err) {
+        console.log("PostgreSQL column migration skipped or failed (might already exist)");
+      }
     } else {
       sqlite.exec(`
         CREATE TABLE IF NOT EXISTS users (
@@ -110,6 +119,7 @@ async function initDb() {
           username TEXT UNIQUE NOT NULL,
           password TEXT NOT NULL,
           role TEXT DEFAULT 'user',
+          avatar TEXT,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS projects (
@@ -134,6 +144,20 @@ async function initDb() {
           timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
         );
       `);
+
+      // Ensure columns exist in SQLite (migration)
+      const columns = sqlite.prepare("PRAGMA table_info(users)").all() as any[];
+      const hasRole = columns.some(c => c.name === 'role');
+      const hasAvatar = columns.some(c => c.name === 'avatar');
+      
+      if (!hasRole) {
+        console.log("Adding 'role' column to SQLite users table...");
+        sqlite.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'");
+      }
+      if (!hasAvatar) {
+        console.log("Adding 'avatar' column to SQLite users table...");
+        sqlite.exec("ALTER TABLE users ADD COLUMN avatar TEXT");
+      }
     }
 
     // Seed data if empty
@@ -150,8 +174,7 @@ async function initDb() {
         await db.query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", [u.username, hashedPassword, 'admin']);
       } else {
         console.log(`Ensuring user ${u.username} is admin...`);
-        const updateRes = await db.query("UPDATE users SET role = $1, password = $2 WHERE username = $3", ['admin', hashedPassword, u.username]);
-        console.log(`Update result for ${u.username}:`, updateRes.rowCount);
+        await db.query("UPDATE users SET role = $1, password = $2 WHERE username = $3", ['admin', hashedPassword, u.username]);
       }
     }
 
@@ -233,11 +256,18 @@ async function startServer() {
       const user = result.rows[0];
 
       if (user) {
+        // Force admin role for the 'admin' or 'admin1' user if it's somehow lost
+        if ((user.username === 'admin' || user.username === 'admin1') && user.role !== 'admin') {
+          console.log(`Fixing admin role for '${user.username}' user during login`);
+          await db.query("UPDATE users SET role = 'admin' WHERE id = $1", [user.id]);
+          user.role = 'admin';
+        }
+
         const isMatch = await bcrypt.compare(password, user.password);
         console.log(`User found: ${user.username}, Role: ${user.role}, password match: ${isMatch}`);
         if (isMatch) {
           const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
-          return res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+          return res.json({ token, user: { id: user.id, username: user.username, role: user.role, avatar: user.avatar } });
         }
       }
       
@@ -252,36 +282,46 @@ async function startServer() {
   // Profile Update
   app.get("/api/profile", authenticateToken, async (req: any, res: any) => {
     try {
-      const result = await db.query("SELECT id, username, role FROM users WHERE id = $1", [req.user.id]);
+      const result = await db.query("SELECT id, username, role, avatar FROM users WHERE id = $1", [req.user.id]);
       if (result.rows.length === 0) {
         return res.status(404).json({ error: "User not found" });
       }
-      console.log(`Profile requested for ${req.user.username}, returning role: ${result.rows[0].role}`);
-      res.json(result.rows[0]);
+      
+      const user = result.rows[0];
+      // Force admin role for the 'admin' or 'admin1' user if it's somehow lost
+      if ((user.username === 'admin' || user.username === 'admin1') && user.role !== 'admin') {
+        console.log(`Fixing admin role for '${user.username}' user during profile fetch`);
+        await db.query("UPDATE users SET role = 'admin' WHERE id = $1", [user.id]);
+        user.role = 'admin';
+      }
+
+      console.log(`Profile requested for ${user.username}, returning role: ${user.role}`);
+      res.json(user);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch profile" });
     }
   });
 
   app.patch("/api/profile", authenticateToken, async (req: any, res: any) => {
-    const { username, password } = req.body;
+    const { username, password, avatar } = req.body;
     const userId = req.user.id;
     try {
-      let query = "UPDATE users SET username = COALESCE($1, username)";
-      let params = [username];
+      let query = "UPDATE users SET username = COALESCE($1, username), avatar = COALESCE($2, avatar)";
+      let params = [username, avatar];
       
       if (password) {
         const hashedPassword = await bcrypt.hash(password, 10);
-        query += ", password = $2 WHERE id = $3 RETURNING id, username, role";
+        query += ", password = $3 WHERE id = $4 RETURNING id, username, role, avatar";
         params.push(hashedPassword, userId);
       } else {
-        query += " WHERE id = $2 RETURNING id, username, role";
+        query += " WHERE id = $3 RETURNING id, username, role, avatar";
         params.push(userId);
       }
       
       const result = await db.query(query, params);
       res.json(result.rows[0]);
     } catch (err) {
+      console.error("Profile update error:", err);
       res.status(500).json({ error: "Failed to update profile" });
     }
   });
@@ -402,7 +442,13 @@ async function startServer() {
 
   app.get("/api/messages", authenticateToken, async (req, res) => {
     try {
-      const result = await db.query("SELECT * FROM messages ORDER BY timestamp DESC LIMIT 50");
+      const result = await db.query(`
+        SELECT m.*, u.avatar 
+        FROM messages m 
+        LEFT JOIN users u ON m.user_name = u.username 
+        ORDER BY m.timestamp DESC 
+        LIMIT 50
+      `);
       res.json(result.rows.reverse());
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch messages" });
@@ -417,6 +463,11 @@ async function startServer() {
         [user_name, content]
       );
       const newMessage = result.rows[0];
+      
+      // Fetch avatar for the new message
+      const userRes = await db.query("SELECT avatar FROM users WHERE username = $1", [user_name]);
+      newMessage.avatar = userRes.rows[0]?.avatar;
+
       io.emit("message:new", newMessage);
       res.json(newMessage);
     } catch (err) {
@@ -432,6 +483,17 @@ async function startServer() {
       res.status(204).send();
     } catch (err) {
       res.status(500).json({ error: "Failed to delete task" });
+    }
+  });
+
+  app.delete("/api/messages/:id", authenticateToken, isAdmin, async (req, res) => {
+    const { id } = req.params;
+    try {
+      await db.query("DELETE FROM messages WHERE id = $1", [id]);
+      io.emit("message:deleted", id);
+      res.status(204).send();
+    } catch (err) {
+      res.status(500).json({ error: "Failed to delete message" });
     }
   });
 
