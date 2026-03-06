@@ -138,10 +138,13 @@ async function initDb() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           project_id INTEGER REFERENCES projects(id),
           title TEXT NOT NULL,
+          description TEXT,
           status TEXT DEFAULT 'todo',
           priority TEXT DEFAULT 'medium',
           assignee TEXT,
-          due_date TEXT
+          created_by TEXT,
+          due_date TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS messages (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -152,17 +155,26 @@ async function initDb() {
       `);
 
       // Ensure columns exist in SQLite (migration)
-      const columns = sqlite.prepare("PRAGMA table_info(users)").all() as any[];
-      const hasRole = columns.some(c => c.name === 'role');
-      const hasAvatar = columns.some(c => c.name === 'avatar');
+      const userColumns = sqlite.prepare("PRAGMA table_info(users)").all() as any[];
+      const hasRole = userColumns.some(c => c.name === 'role');
+      const hasAvatar = userColumns.some(c => c.name === 'avatar');
       
       if (!hasRole) {
-        console.log("Adding 'role' column to SQLite users table...");
         sqlite.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'");
       }
       if (!hasAvatar) {
-        console.log("Adding 'avatar' column to SQLite users table...");
         sqlite.exec("ALTER TABLE users ADD COLUMN avatar TEXT");
+      }
+
+      const taskColumns = sqlite.prepare("PRAGMA table_info(tasks)").all() as any[];
+      if (!taskColumns.some(c => c.name === 'description')) {
+        sqlite.exec("ALTER TABLE tasks ADD COLUMN description TEXT");
+      }
+      if (!taskColumns.some(c => c.name === 'created_by')) {
+        sqlite.exec("ALTER TABLE tasks ADD COLUMN created_by TEXT");
+      }
+      if (!taskColumns.some(c => c.name === 'created_at')) {
+        sqlite.exec("ALTER TABLE tasks ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP");
       }
     }
 
