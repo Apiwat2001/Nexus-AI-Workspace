@@ -632,7 +632,21 @@ export default function App() {
                               backgroundColor: darkMode ? '#0f172a' : '#ffffff',
                               borderRadius: '16px', 
                               border: darkMode ? '1px solid #1e293b' : '1px solid #e2e8f0', 
-                              boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' 
+                              boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)',
+                              padding: '12px'
+                            }}
+                            itemStyle={{
+                              color: darkMode ? '#f1f5f9' : '#0f172a',
+                              fontSize: '12px',
+                              fontWeight: '600',
+                              textTransform: 'capitalize'
+                            }}
+                            labelStyle={{
+                              color: darkMode ? '#94a3b8' : '#64748b',
+                              fontSize: '11px',
+                              marginBottom: '4px',
+                              fontWeight: 'bold',
+                              textTransform: 'uppercase'
                             }}
                           />
                           <Bar dataKey="count" radius={[8, 8, 0, 0]}>
