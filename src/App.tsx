@@ -174,12 +174,17 @@ export default function App() {
       setMessages(prev => prev.filter(m => m.id !== parseInt(id)));
     });
 
+    socket.on('messages:cleared', () => {
+      setMessages([]);
+    });
+
     return () => {
       socket.off('task:created');
       socket.off('task:updated');
       socket.off('task:deleted');
       socket.off('message:new');
       socket.off('message:deleted');
+      socket.off('messages:cleared');
     };
   }, [token, user?.role]);
 
@@ -343,6 +348,13 @@ export default function App() {
     if (!confirm('Delete this message?')) return;
     try {
       await authFetch(`/api/messages/${id}`, { method: 'DELETE' });
+    } catch (err) {}
+  };
+
+  const clearAllMessages = async () => {
+    if (!confirm('Are you sure you want to clear ALL messages? This cannot be undone.')) return;
+    try {
+      await authFetch('/api/messages', { method: 'DELETE' });
     } catch (err) {}
   };
 
@@ -737,6 +749,15 @@ export default function App() {
                       <p className="text-xs text-emerald-500 font-bold uppercase tracking-wider">4 members online</p>
                     </div>
                   </div>
+                  {user.role === 'admin' && (
+                    <button 
+                      onClick={clearAllMessages}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400 rounded-lg text-xs font-black uppercase tracking-widest hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-all"
+                    >
+                      <Trash2 size={14} />
+                      Clear All
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">

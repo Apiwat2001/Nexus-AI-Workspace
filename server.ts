@@ -497,6 +497,16 @@ async function startServer() {
     }
   });
 
+  app.delete("/api/messages", authenticateToken, isAdmin, async (req, res) => {
+    try {
+      await db.query("DELETE FROM messages");
+      io.emit("messages:cleared");
+      res.status(204).send();
+    } catch (err) {
+      res.status(500).json({ error: "Failed to clear messages" });
+    }
+  });
+
   // Socket.io logic
   io.on("connection", (socket) => {
     console.log("User connected:", socket.id);
