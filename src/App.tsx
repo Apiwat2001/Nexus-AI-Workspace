@@ -1348,13 +1348,14 @@ const TaskCard: React.FC<{ task: Task, onStatusChange: (id: number, status: Task
       <h5 className="text-sm font-bold mb-4 leading-relaxed text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{task.title}</h5>
       
       <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
-        <div className="flex -space-x-2">
+        <div className="flex items-center gap-2">
           <img 
-            src={`https://picsum.photos/seed/${task.id}/40/40`} 
-            className="w-7 h-7 rounded-full border-2 border-[var(--card)] shadow-sm" 
+            src={task.assignee_avatar || `https://picsum.photos/seed/${task.assignee || task.id}/40/40`} 
+            className="w-7 h-7 rounded-full border-2 border-[var(--card)] shadow-sm object-cover" 
             alt="Assignee"
             referrerPolicy="no-referrer"
           />
+          {task.assignee && <span className="text-[10px] font-bold text-slate-500">{task.assignee}</span>}
         </div>
         <div className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500">
           <Clock size={12} />

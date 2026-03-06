@@ -329,7 +329,7 @@ async function startServer() {
   // Admin Routes
   app.get("/api/admin/users", authenticateToken, isAdmin, async (req: any, res: any) => {
     try {
-      const result = await db.query("SELECT id, username, role, created_at FROM users ORDER BY id ASC");
+      const result = await db.query("SELECT id, username, role, avatar, created_at FROM users ORDER BY id ASC");
       res.json(result.rows);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch users" });
@@ -393,7 +393,11 @@ async function startServer() {
 
   app.get("/api/tasks", authenticateToken, async (req, res) => {
     try {
-      const result = await db.query("SELECT * FROM tasks");
+      const result = await db.query(`
+        SELECT t.*, u.avatar as assignee_avatar 
+        FROM tasks t 
+        LEFT JOIN users u ON t.assignee = u.username
+      `);
       res.json(result.rows);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch tasks" });

@@ -5,6 +5,7 @@ export interface Task {
   status: 'todo' | 'in-progress' | 'done';
   priority: 'low' | 'medium' | 'high';
   assignee?: string;
+  assignee_avatar?: string;
   due_date?: string;
 }
 
