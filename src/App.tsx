@@ -11,6 +11,7 @@ import {
   TrendingUp,
   Clock,
   AlertCircle,
+  Calendar,
   ChevronRight,
   MoreVertical,
   Send,
@@ -85,7 +86,14 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // New Task Form State
-  const [newTask, setNewTask] = useState({ title: '', priority: 'medium' as Task['priority'] });
+  const [newTask, setNewTask] = useState({ 
+    title: '', 
+    description: '', 
+    priority: 'medium' as Task['priority'],
+    assignee: '',
+    due_date: ''
+  });
+  const [allUsers, setAllUsers] = useState<{username: string, avatar: string}[]>([]);
 
   useEffect(() => {
     if (darkMode) {
@@ -147,6 +155,7 @@ export default function App() {
     fetchTasks();
     fetchStats();
     fetchMessages();
+    fetchUsers();
     if (user?.role === 'admin') fetchAdminUsers();
     
     setProfileForm({ username: user?.username || '', password: '', avatar: user?.avatar || '' });
@@ -193,6 +202,16 @@ export default function App() {
       chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, activeTab]);
+
+  const fetchUsers = async () => {
+    try {
+      const res = await authFetch('/api/users');
+      if (res.ok) {
+        const data = await res.json();
+        setAllUsers(data);
+      }
+    } catch (err) {}
+  };
 
   const fetchTasks = async () => {
     try {
@@ -329,10 +348,19 @@ export default function App() {
     try {
       await authFetch('/api/tasks', {
         method: 'POST',
-        body: JSON.stringify({ ...newTask, status: newTask.status || 'todo' })
+        body: JSON.stringify({ 
+          ...newTask, 
+          status: 'todo' 
+        })
       });
       
-      setNewTask({ title: '', priority: 'medium' });
+      setNewTask({ 
+        title: '', 
+        description: '', 
+        priority: 'medium',
+        assignee: '',
+        due_date: ''
+      });
       setIsTaskModalOpen(false);
     } catch (err) {}
   };
@@ -1159,12 +1187,13 @@ export default function App() {
                   <X size={20} />
                 </button>
               </div>
-              <form onSubmit={createTask} className="p-6 space-y-6">
+              <form onSubmit={createTask} className="p-6 space-y-4">
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 dark:text-gray-300 mb-2">Task Title</label>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Task Title</label>
                   <input 
                     autoFocus
                     type="text" 
+                    required
                     className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 dark:text-white"
                     placeholder="e.g. Implement user authentication"
                     value={newTask.title}
@@ -1172,7 +1201,40 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 dark:text-gray-300 mb-2">Priority</label>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Description</label>
+                  <textarea 
+                    className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 dark:text-white min-h-[80px]"
+                    placeholder="Add more details about this task..."
+                    value={newTask.description}
+                    onChange={(e) => setNewTask({...newTask, description: e.target.value})}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Assignee</label>
+                    <select 
+                      className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 dark:text-white"
+                      value={newTask.assignee}
+                      onChange={(e) => setNewTask({...newTask, assignee: e.target.value})}
+                    >
+                      <option value="">Unassigned</option>
+                      {allUsers.map(u => (
+                        <option key={u.username} value={u.username}>{u.username}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Due Date</label>
+                    <input 
+                      type="date" 
+                      className="w-full px-4 py-2 bg-[var(--background)] border border-[var(--border)] rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-slate-900 dark:text-white"
+                      value={newTask.due_date}
+                      onChange={(e) => setNewTask({...newTask, due_date: e.target.value})}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Priority</label>
                   <div className="grid grid-cols-3 gap-3">
                     {(['low', 'medium', 'high'] as const).map((p) => (
                       <button
@@ -1180,7 +1242,7 @@ export default function App() {
                         type="button"
                         onClick={() => setNewTask({...newTask, priority: p})}
                         className={cn(
-                          "py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all",
+                          "py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all",
                           newTask.priority === p 
                             ? "bg-indigo-600 text-white shadow-md shadow-indigo-500/20" 
                             : "bg-[var(--secondary)] text-slate-500 dark:text-gray-400 hover:bg-[var(--accent)]"
@@ -1191,7 +1253,7 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-                <button className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-500/20">
+                <button className="w-full py-3 mt-4 bg-indigo-600 text-white rounded-xl font-black shadow-lg shadow-indigo-500/20 hover:bg-indigo-700 transition-all uppercase tracking-widest text-xs">
                   Create Task
                 </button>
               </form>
@@ -1295,18 +1357,26 @@ const TaskCard: React.FC<{ task: Task, onStatusChange: (id: number, status: Task
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.9, y: -10 }}
       whileHover={{ y: -4 }}
-      className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm hover:shadow-xl transition-all cursor-grab active:cursor-grabbing group relative overflow-hidden"
+      className="bg-[var(--card)] p-5 rounded-2xl border border-[var(--border)] shadow-sm hover:shadow-xl transition-all cursor-grab active:cursor-grabbing group relative overflow-hidden flex flex-col gap-4"
     >
       <div className="absolute top-0 left-0 w-1 h-full bg-indigo-500 opacity-0 group-hover:opacity-100 transition-opacity" />
       
-      <div className="flex items-start justify-between mb-4">
-        <span className={cn(
-          "text-[10px] font-bold px-2.5 py-1 rounded-lg uppercase tracking-wider shadow-sm",
-          task.priority === 'high' ? "bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400" : 
-          task.priority === 'medium' ? "bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400" : "bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400"
-        )}>
-          {task.priority}
-        </span>
+      <div className="flex items-start justify-between">
+        <div className="flex gap-2">
+          <span className={cn(
+            "text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-widest shadow-sm",
+            task.priority === 'high' ? "bg-rose-50 dark:bg-rose-950/30 text-rose-600 dark:text-rose-400" : 
+            task.priority === 'medium' ? "bg-amber-50 dark:bg-amber-950/30 text-amber-600 dark:text-amber-400" : "bg-blue-50 dark:bg-blue-950/30 text-blue-600 dark:text-blue-400"
+          )}>
+            {task.priority}
+          </span>
+          {task.due_date && (
+            <span className="text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-widest bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center gap-1">
+              <Calendar size={10} />
+              {new Date(task.due_date).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+            </span>
+          )}
+        </div>
         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all translate-x-2 group-hover:translate-x-0">
           <button 
             onClick={() => onDelete(task.id)}
@@ -1345,21 +1415,37 @@ const TaskCard: React.FC<{ task: Task, onStatusChange: (id: number, status: Task
         </div>
       </div>
       
-      <h5 className="text-sm font-bold mb-4 leading-relaxed text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">{task.title}</h5>
+      <div>
+        <h5 className="text-sm font-black leading-relaxed text-slate-800 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors mb-1">{task.title}</h5>
+        {task.description && (
+          <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">{task.description}</p>
+        )}
+      </div>
       
-      <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800">
-        <div className="flex items-center gap-2">
-          <img 
-            src={task.assignee_avatar || `https://picsum.photos/seed/${task.assignee || task.id}/40/40`} 
-            className="w-7 h-7 rounded-full border-2 border-[var(--card)] shadow-sm object-cover" 
-            alt="Assignee"
-            referrerPolicy="no-referrer"
-          />
-          {task.assignee && <span className="text-[10px] font-bold text-slate-500">{task.assignee}</span>}
+      <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800 mt-auto">
+        <div className="flex flex-col gap-1">
+          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Assignee</span>
+          <div className="flex items-center gap-2">
+            <img 
+              src={task.assignee_avatar || `https://picsum.photos/seed/${task.assignee || task.id}/40/40`} 
+              className="w-6 h-6 rounded-full border border-[var(--border)] object-cover" 
+              alt="Assignee"
+              referrerPolicy="no-referrer"
+            />
+            <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300">{task.assignee || 'Unassigned'}</span>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5 text-slate-400 dark:text-slate-500">
-          <Clock size={12} />
-          <span className="text-[10px] font-bold uppercase tracking-widest">Oct 24</span>
+        <div className="flex flex-col gap-1 items-end">
+          <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Created By</span>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-slate-600 dark:text-slate-300">{task.created_by}</span>
+            <img 
+              src={task.creator_avatar || `https://picsum.photos/seed/${task.created_by}/40/40`} 
+              className="w-6 h-6 rounded-full border border-[var(--border)] object-cover" 
+              alt="Creator"
+              referrerPolicy="no-referrer"
+            />
+          </div>
         </div>
       </div>
     </motion.div>

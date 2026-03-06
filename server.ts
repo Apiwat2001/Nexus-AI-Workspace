@@ -92,10 +92,13 @@ async function initDb() {
           id SERIAL PRIMARY KEY,
           project_id INTEGER REFERENCES projects(id),
           title TEXT NOT NULL,
+          description TEXT,
           status TEXT DEFAULT 'todo',
           priority TEXT DEFAULT 'medium',
           assignee TEXT,
-          due_date TEXT
+          created_by TEXT,
+          due_date TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS messages (
           id SERIAL PRIMARY KEY,
@@ -109,6 +112,9 @@ async function initDb() {
       try {
         await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'");
         await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar TEXT");
+        await pool.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS description TEXT");
+        await pool.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS created_by TEXT");
+        await pool.query("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP");
       } catch (err) {
         console.log("PostgreSQL column migration skipped or failed (might already exist)");
       }
@@ -326,6 +332,15 @@ async function startServer() {
     }
   });
 
+  app.get("/api/users", authenticateToken, async (req, res) => {
+    try {
+      const result = await db.query("SELECT username, avatar FROM users ORDER BY username ASC");
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
   // Admin Routes
   app.get("/api/admin/users", authenticateToken, isAdmin, async (req: any, res: any) => {
     try {
@@ -394,9 +409,13 @@ async function startServer() {
   app.get("/api/tasks", authenticateToken, async (req, res) => {
     try {
       const result = await db.query(`
-        SELECT t.*, u.avatar as assignee_avatar 
+        SELECT t.*, 
+               u1.avatar as assignee_avatar,
+               u2.avatar as creator_avatar
         FROM tasks t 
-        LEFT JOIN users u ON t.assignee = u.username
+        LEFT JOIN users u1 ON t.assignee = u1.username
+        LEFT JOIN users u2 ON t.created_by = u2.username
+        ORDER BY t.created_at DESC
       `);
       res.json(result.rows);
     } catch (err) {
@@ -413,14 +432,26 @@ async function startServer() {
     }
   });
 
-  app.post("/api/tasks", authenticateToken, async (req, res) => {
-    const { title, status, priority, project_id } = req.body;
+  app.post("/api/tasks", authenticateToken, async (req: any, res: any) => {
+    const { title, description, status, priority, project_id, assignee, due_date } = req.body;
+    const created_by = req.user.username;
     try {
       const result = await db.query(
-        "INSERT INTO tasks (title, status, priority, project_id) VALUES ($1, $2, $3, $4) RETURNING *",
-        [title, status || 'todo', priority || 'medium', project_id || 1]
+        "INSERT INTO tasks (title, description, status, priority, project_id, assignee, created_by, due_date) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
+        [title, description, status || 'todo', priority || 'medium', project_id || 1, assignee, created_by, due_date]
       );
       const newTask = result.rows[0];
+      
+      // Fetch avatars for the new task
+      const avatarsRes = await db.query(`
+        SELECT 
+          (SELECT avatar FROM users WHERE username = $1) as assignee_avatar,
+          (SELECT avatar FROM users WHERE username = $2) as creator_avatar
+      `, [assignee, created_by]);
+      
+      newTask.assignee_avatar = avatarsRes.rows[0]?.assignee_avatar;
+      newTask.creator_avatar = avatarsRes.rows[0]?.creator_avatar;
+
       io.emit("task:created", newTask);
       res.json(newTask);
     } catch (err) {
