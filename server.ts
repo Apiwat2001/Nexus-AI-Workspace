@@ -144,16 +144,20 @@ async function initDb() {
 
     for (const u of usersToSeed) {
       const check = await db.query("SELECT * FROM users WHERE username = $1", [u.username]);
+      const hashedPassword = await bcrypt.hash(u.password, 10);
       if (check.rows.length === 0) {
-        console.log(`Seeding user: ${u.username}...`);
-        const hashedPassword = await bcrypt.hash(u.password, 10);
-        await db.query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", [u.username, hashedPassword, u.role]);
-      } else if (u.username === 'admin' || u.username === 'admin1') {
-        // Ensure they have admin role and update password to 120944 if needed
-        const hashedPassword = await bcrypt.hash(u.password, 10);
-        await db.query("UPDATE users SET role = $1, password = $2 WHERE username = $3", ['admin', hashedPassword, u.username]);
+        console.log(`Seeding user: ${u.username} as admin...`);
+        await db.query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", [u.username, hashedPassword, 'admin']);
+      } else {
+        console.log(`Ensuring user ${u.username} is admin...`);
+        const updateRes = await db.query("UPDATE users SET role = $1, password = $2 WHERE username = $3", ['admin', hashedPassword, u.username]);
+        console.log(`Update result for ${u.username}:`, updateRes.rowCount);
       }
     }
+
+    // Double check admin role
+    const verifyAdmins = await db.query("SELECT username, role FROM users");
+    console.log("All Registered Users:", verifyAdmins.rows);
 
     const projectRes = await db.query("SELECT COUNT(*) as count FROM projects");
     if (parseInt(projectRes.rows[0].count) === 0) {
@@ -230,7 +234,7 @@ async function startServer() {
 
       if (user) {
         const isMatch = await bcrypt.compare(password, user.password);
-        console.log(`User found, password match: ${isMatch}`);
+        console.log(`User found: ${user.username}, Role: ${user.role}, password match: ${isMatch}`);
         if (isMatch) {
           const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
           return res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
@@ -249,6 +253,10 @@ async function startServer() {
   app.get("/api/profile", authenticateToken, async (req: any, res: any) => {
     try {
       const result = await db.query("SELECT id, username, role FROM users WHERE id = $1", [req.user.id]);
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      console.log(`Profile requested for ${req.user.username}, returning role: ${result.rows[0].role}`);
       res.json(result.rows[0]);
     } catch (err) {
       res.status(500).json({ error: "Failed to fetch profile" });

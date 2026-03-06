@@ -45,8 +45,13 @@ const socket = io();
 
 export default function App() {
   const [user, setUser] = useState<{ id: number, username: string, role: string } | null>(() => {
-    const saved = localStorage.getItem('user');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('user');
+      const parsed = saved ? JSON.parse(saved) : null;
+      return parsed && parsed.username ? parsed : null;
+    } catch (e) {
+      return null;
+    }
   });
   const [token, setToken] = useState<string | null>(() => localStorage.getItem('token'));
   
@@ -93,6 +98,7 @@ export default function App() {
   const toggleDarkMode = () => setDarkMode(!darkMode);
 
   const handleLogin = (userData: { user: any, token: string }) => {
+    console.log('Login successful, user data:', userData.user);
     setUser(userData.user);
     setToken(userData.token);
     localStorage.setItem('user', JSON.stringify(userData.user));
@@ -127,11 +133,14 @@ export default function App() {
       try {
         const res = await authFetch('/api/profile');
         const data = await res.json();
-        if (JSON.stringify(data) !== JSON.stringify(user)) {
+        console.log('Profile fetched:', data);
+        if (data && data.username && JSON.stringify(data) !== JSON.stringify(user)) {
           setUser(data);
           localStorage.setItem('user', JSON.stringify(data));
         }
-      } catch (err) {}
+      } catch (err) {
+        console.error('Failed to fetch profile:', err);
+      }
     };
 
     fetchProfile();
@@ -314,7 +323,7 @@ export default function App() {
   };
 
   const filteredTasks = tasks.filter(t => {
-    const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch = (t.title?.toLowerCase() || '').includes(searchQuery?.toLowerCase() || '');
     const matchesFilter = filterStatus === 'all' || t.status === filterStatus;
     return matchesSearch && matchesFilter;
   });
@@ -839,7 +848,7 @@ export default function App() {
               </motion.div>
             )}
 
-            {activeTab === 'settings' && (
+            {activeTab === 'settings' && user && (
               <motion.div 
                 key="settings"
                 initial={{ opacity: 0 }}
@@ -889,7 +898,7 @@ export default function App() {
                         <img src={`https://picsum.photos/seed/${user.username}/100/100`} className="w-16 h-16 rounded-full border-2 border-[var(--border)]" alt="Profile" />
                         <div className="flex-1">
                           <p className="font-bold text-lg">{user.username}</p>
-                          <p className="text-sm text-gray-500">{user.username.toLowerCase()}@nexus.ai</p>
+                          <p className="text-sm text-gray-500">{(user.username || '').toLowerCase()}@nexus.ai</p>
                         </div>
                         <button onClick={() => setIsProfileEditing(true)} className="px-4 py-2 border border-[var(--border)] rounded-xl text-sm font-semibold hover:bg-[var(--secondary)] transition-all">Edit</button>
                       </div>
