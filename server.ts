@@ -137,11 +137,22 @@ async function initDb() {
     }
 
     // Seed data if empty
-    const adminCheck = await db.query("SELECT * FROM users WHERE username = $1", ['admin']);
-    if (adminCheck.rows.length === 0) {
-      console.log("Seeding admin user...");
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      await db.query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", ['admin', hashedPassword, 'admin']);
+    const usersToSeed = [
+      { username: 'admin', password: '120944', role: 'admin' },
+      { username: 'admin1', password: '120944', role: 'admin' }
+    ];
+
+    for (const u of usersToSeed) {
+      const check = await db.query("SELECT * FROM users WHERE username = $1", [u.username]);
+      if (check.rows.length === 0) {
+        console.log(`Seeding user: ${u.username}...`);
+        const hashedPassword = await bcrypt.hash(u.password, 10);
+        await db.query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", [u.username, hashedPassword, u.role]);
+      } else if (u.username === 'admin' || u.username === 'admin1') {
+        // Ensure they have admin role and update password to 120944 if needed
+        const hashedPassword = await bcrypt.hash(u.password, 10);
+        await db.query("UPDATE users SET role = $1, password = $2 WHERE username = $3", ['admin', hashedPassword, u.username]);
+      }
     }
 
     const projectRes = await db.query("SELECT COUNT(*) as count FROM projects");
