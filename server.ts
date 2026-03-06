@@ -65,9 +65,9 @@ async function initDb() {
     // Test PostgreSQL connection
     await pool.query('SELECT 1');
     usePostgres = true;
-    console.log("Using PostgreSQL");
+    console.log("Using PostgreSQL Database");
   } catch (err) {
-    console.log("PostgreSQL not available, falling back to SQLite");
+    console.log("PostgreSQL not available, falling back to SQLite Database");
     usePostgres = false;
   }
 
@@ -137,8 +137,9 @@ async function initDb() {
     }
 
     // Seed data if empty
-    const userRes = await db.query("SELECT COUNT(*) as count FROM users");
-    if (parseInt(userRes.rows[0].count) === 0) {
+    const adminCheck = await db.query("SELECT * FROM users WHERE username = $1", ['admin']);
+    if (adminCheck.rows.length === 0) {
+      console.log("Seeding admin user...");
       const hashedPassword = await bcrypt.hash('admin123', 10);
       await db.query("INSERT INTO users (username, password, role) VALUES ($1, $2, $3)", ['admin', hashedPassword, 'admin']);
     }
@@ -211,17 +212,24 @@ async function startServer() {
 
   app.post("/api/auth/login", async (req, res) => {
     const { username, password } = req.body;
+    console.log(`Login attempt for: ${username}`);
     try {
       const result = await db.query("SELECT * FROM users WHERE username = $1", [username]);
       const user = result.rows[0];
 
-      if (user && await bcrypt.compare(password, user.password)) {
-        const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
-        res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
-      } else {
-        res.status(401).json({ error: "Invalid credentials" });
+      if (user) {
+        const isMatch = await bcrypt.compare(password, user.password);
+        console.log(`User found, password match: ${isMatch}`);
+        if (isMatch) {
+          const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '24h' });
+          return res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
+        }
       }
+      
+      console.log("Invalid credentials");
+      res.status(401).json({ error: "Invalid credentials" });
     } catch (err) {
+      console.error("Login error:", err);
       res.status(500).json({ error: "Login failed" });
     }
   });
