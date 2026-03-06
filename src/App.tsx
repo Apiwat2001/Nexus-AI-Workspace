@@ -290,12 +290,18 @@ export default function App() {
   };
 
   const generateAiInsight = async () => {
+    if (tasks.length === 0) {
+      setAiInsight('You have no tasks to analyze yet. Add some tasks to get productivity insights!');
+      return;
+    }
+    
     setIsAiLoading(true);
     try {
       const insight = await geminiService.analyzeProductivity(tasks);
-      setAiInsight(insight || 'No insights available.');
+      setAiInsight(insight || 'No insights available at the moment.');
     } catch (error) {
       console.error(error);
+      setAiInsight('Failed to generate insights. Please try again later.');
     } finally {
       setIsAiLoading(false);
     }
@@ -564,8 +570,14 @@ export default function App() {
                   <motion.div 
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    className="bg-gradient-to-r from-indigo-600 to-violet-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-200"
+                    className="bg-gradient-to-r from-indigo-600 to-violet-600 rounded-2xl p-6 text-white shadow-lg shadow-indigo-200 relative overflow-hidden"
                   >
+                    <button 
+                      onClick={() => setAiInsight('')}
+                      className="absolute top-4 right-4 p-1 hover:bg-white/20 rounded-lg transition-colors"
+                    >
+                      <X size={16} />
+                    </button>
                     <div className="flex items-start gap-4">
                       <div className="p-3 bg-white/20 rounded-xl backdrop-blur-md">
                         <Sparkles className="w-6 h-6" />
